@@ -1,7 +1,7 @@
 import threading, queue, time, json
 from sqlalchemy.orm import Session
 from .db import SessionLocal
-from . import crud, tasks, higgsfield
+from . import crud, tasks, higgsfield, render
 from typing import Dict
 
 job_q = queue.Queue()
@@ -38,19 +38,10 @@ def worker_loop():
                 crud.update_job(db, job.id, status="completed", progress=100)
 
             elif job.type == "render":
-                timeline = payload.get("timeline", [])
-                paths = []
-                for item in timeline:
-                    if "asset_id" in item:
-                        asset = crud.get_asset(db, item["asset_id"])
-                        if not asset: continue
-                        p = asset.proxy_path if item.get("use_proxy") and asset.proxy_path else asset.master_path
-                        paths.append(p)
-                    elif "path" in item:
-                        paths.append(item["path"])
-                out = f"./storage/renders/{job.id}.mp4"
-                tasks.concat_files_reencode(paths, out)
-                crud.update_job(db, job.id, status="completed", progress=100, result_path=out)
+                timeline = json.loads(job.payload)
+                command, output_path = render.build_ffmpeg_command(db, timeline, job.id)
+                logs = render.run_ffmpeg_render(command, job.id)
+                crud.update_job(db, job.id, status="completed", progress=100, result_path=output_path, logs=logs)
             
             elif job.type == "higgsfield-generate":
                 # Example of a generative task

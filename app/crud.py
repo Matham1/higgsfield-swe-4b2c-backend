@@ -2,6 +2,7 @@ import json
 import uuid
 from sqlalchemy.orm import Session
 from . import models, schemas
+from typing import Optional
 
 def create_asset(db: Session, filename: str, master_path: str, project_id: str = None):
     aid = uuid.uuid4().hex
@@ -54,3 +55,19 @@ def create_project(db: Session, project: schemas.ProjectCreate, user_id: str):
     db.refresh(db_project)
     
     return db_project
+
+def get_projects_by_user(db: Session, user_id: str):
+    return db.query(models.Project).filter(models.Project.user_id == user_id).all()
+
+def get_all_assets(db: Session, project_id: Optional[str] = None):
+    """
+    Retrieves all assets, optionally filtered by project_id.
+    Returns a list of models.Asset objects.
+    """
+    query = db.query(models.Asset)
+    
+    # Apply optional filtering
+    if project_id:
+        query = query.filter(models.Asset.project_id == project_id)
+        
+    return query.all()
