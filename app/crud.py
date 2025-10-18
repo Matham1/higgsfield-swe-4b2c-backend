@@ -1,12 +1,45 @@
 import json
 import uuid
 from sqlalchemy.orm import Session
-from . import models, schemas
 from typing import Optional
+from . import models, schemas
 
-def create_asset(db: Session, filename: str, master_path: str, project_id: str = None):
+
+DEFAULT_PROJECT_NAME = "Default Project"
+DEFAULT_PROJECT_USER = "system-default"
+
+
+def _ensure_project(db: Session, project_id: Optional[str]) -> str:
+    if project_id:
+        return project_id
+
+    project = (
+        db.query(models.Project)
+        .filter(models.Project.user_id == DEFAULT_PROJECT_USER, models.Project.name == DEFAULT_PROJECT_NAME)
+        .first()
+    )
+    if not project:
+        project = models.Project(
+            id=uuid.uuid4().hex,
+            name=DEFAULT_PROJECT_NAME,
+            user_id=DEFAULT_PROJECT_USER,
+        )
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+    return project.id
+
+
+def create_asset(db: Session, filename: str, master_path: str, project_id: str = None, asset_type: str = "video"):
+    project_id = _ensure_project(db, project_id)
     aid = uuid.uuid4().hex
-    asset = models.Asset(id=aid, filename=filename, master_path=str(master_path), project_id=project_id)
+    asset = models.Asset(
+        id=aid,
+        filename=filename,
+        master_path=str(master_path),
+        project_id=project_id,
+        asset_type=asset_type,
+    )
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
 
@@ -14,6 +47,7 @@ def get_asset(db: Session, asset_id: str):
     return db.query(models.Asset).get(asset_id)
 
 def create_job(db: Session, type: str, payload: dict, project_id: str = None):
+    project_id = _ensure_project(db, project_id)
     jid = "job_" + uuid.uuid4().hex[:12]
     j = models.Job(id=jid, type=type, status="queued", payload=json.dumps(payload), project_id=project_id)
     db.add(j); db.commit(); db.refresh(j)

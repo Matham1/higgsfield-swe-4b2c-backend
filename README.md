@@ -14,6 +14,49 @@ run server:
 uvicorn app.main:app --reload
 ```
 
+## Environment
+
+Create a `.env` file in the repository root (example values below) and load it when the server starts automatically:
+
+```bash
+HIGGSFIELD_API_KEY=your_hf_api_key
+HIGGSFIELD_API_SECRET=your_hf_secret
+# base URL that Hailuo will use to pull extracted frames back (should be externally reachable in production)
+PUBLIC_BASE_URL=http://localhost:8000
+# Optional: configure remote storage for extracted frames
+# R2_ACCESS_KEY_ID=...
+# R2_SECRET_ACCESS_KEY=...
+# R2_BUCKET_NAME=...
+# R2_ACCOUNT_ID=...
+# R2_PUBLIC_DOMAIN=https://your-bucket.r2.cloudflarestorage.com
+# optional overrides:
+# HIGGSFIELD_PLATFORM_BASE=https://platform.higgsfield.ai
+# Optional: set HAILUO_MODEL_ID if the endpoint requires an explicit model identifier
+# HAILUO_MODEL_ID=minimax-hailuo-02
+```
+
+## Key Endpoints
+
+- `POST /upload/` — upload media assets; saves them to `storage/assets/` and enqueues proxy generation.
+- `GET /upload/{asset_id}` — fetch metadata for an uploaded/ generated asset.
+- `GET /transitions/hailuo/motions` — returns the cached Minimax Hailuo 02 motion catalogue (id, name, description, etc.).
+- `POST /transitions/hailuo` — queue a Minimax Hailuo transition job using the last frame of one asset and the first frame of another. **`motion_id` is required** and must come from the motion catalogue above. Payload shape:
+
+  ```json
+  {
+    "project_id": "optional-project",
+    "from_asset_id": "assetA",
+    "to_asset_id": "assetB",
+    "prompt": "Seamless cinematic bridge",
+    "motion_id": "ea035f68-b350-40f1-b7f4-7dff999fdd67",
+    "duration": 2,
+    "resolution": "768",
+    "enhance_prompt": true
+  }
+  ```
+
+  Response returns `{ "job_id": "job_xxx" }`; poll `/jobs/{job_id}` until `status` is `completed`, then inspect `payload.asset_id` for the generated transition asset. Static files are served from `/storage/...` for direct download.
+
 upload a file:
 
 ```bash

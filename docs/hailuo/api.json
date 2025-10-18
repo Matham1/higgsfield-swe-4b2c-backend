@@ -1,0 +1,17 @@
+{
+  "params": {
+    "prompt": "There are sentences.",
+    "duration": 6,
+    "motion_id": "",
+    "resolution": "768",
+    "input_image": {
+      "type": "image_url",
+      "image_url": "https://d3snorpfx4xhv8.cloudfront.net/357dcf30-f4ae-4b54-89ee-ec47035818cc/e890d1ff-23e7-4bb3-88f6-f8d12cabc7dc.jpeg"
+    },
+    "enhance_prompt": true,
+    "input_image_end": {
+      "type": "image_url",
+      "image_url": "https://d3snorpfx4xhv8.cloudfront.net/357dcf30-f4ae-4b54-89ee-ec47035818cc/e090e449-7aca-4478-98bf-b82334b3a3b5.jpeg"
+    }
+  }
+}

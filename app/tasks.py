@@ -32,3 +32,31 @@ def concat_files_reencode(input_paths: List[str], out_path: str):
     cmd += ["-filter_complex", vf, "-map", "[outv]", "-map", "[outa]", "-c:v", "libx264", "-preset", "medium", "-crf", "22", out_path]
     subprocess.check_call(cmd)
     return out_path
+
+
+def _extract_frame(video_path: str, frame_path: str, *, from_end: bool = False, offset: float = 0.04):
+    """Extract a single frame from the given video.
+
+    When ``from_end`` is True, grabs a frame within ``offset`` seconds of the end; otherwise uses
+    ``offset`` seconds from the start. ``offset`` defaults to 40ms to keep things snappy while still
+    generating a visually representative frame.
+    """
+
+    Path(frame_path).parent.mkdir(parents=True, exist_ok=True)
+    cmd = [FFMPEG_BIN, "-y"]
+    if from_end:
+        cmd += ["-sseof", f"-{abs(offset)}"]
+    else:
+        cmd += ["-ss", f"{max(offset, 0):.3f}"]
+
+    cmd += ["-i", video_path, "-frames:v", "1", "-q:v", "2", frame_path]
+    subprocess.check_call(cmd)
+    return frame_path
+
+
+def extract_first_frame(video_path: str, frame_path: str, offset: float = 0.0):
+    return _extract_frame(video_path, frame_path, from_end=False, offset=offset)
+
+
+def extract_last_frame(video_path: str, frame_path: str, offset: float = 0.08):
+    return _extract_frame(video_path, frame_path, from_end=True, offset=offset)

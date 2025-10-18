@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List, Dict
+from pydantic import BaseModel, ConfigDict
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class AssetCreate(BaseModel):
@@ -11,6 +11,9 @@ class AssetOut(BaseModel):
     filename: str
     master_path: str
     proxy_path: Optional[str] = None
+    asset_type: Optional[str] = "video"
+
+    model_config = ConfigDict(from_attributes=True)
 
 class JobCreate(BaseModel):
     project_id: Optional[str]
@@ -25,6 +28,9 @@ class JobOut(BaseModel):
     progress: int
     result_path: Optional[str] = None
     logs: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Effect(BaseModel):
@@ -103,3 +109,15 @@ class AssetRead(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+
+class HailuoTransitionRequest(BaseModel):
+    project_id: Optional[str] = None
+    from_asset_id: str
+    to_asset_id: str
+    prompt: str
+    motion_id: str
+    duration: Optional[int] = None
+    resolution: Optional[str] = "768"
+    enhance_prompt: Optional[bool] = True
