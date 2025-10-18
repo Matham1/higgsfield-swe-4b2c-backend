@@ -11,6 +11,9 @@ from .config import (
     R2_BUCKET_NAME,
     R2_ACCOUNT_ID,
     R2_PUBLIC_DOMAIN,
+    HAILUO_TIMEOUT,
+    HAILUO_POLL_INTERVAL,
+    HAILUO_MAX_POLLS,
 )
 from typing import Dict
 from pathlib import Path
@@ -76,7 +79,11 @@ def _prepare_frame(job_id: str, asset, *, start: bool) -> tuple[Path, bool]:
     tmp_dir = STORAGE_DIR / "frames"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = Path(asset.master_path).suffix or ".jpg"
+    if asset.asset_type == "video":
+        suffix = ".jpg"
+    else:
+        suffix = Path(asset.master_path).suffix or ".jpg"
+
     frame_name = f"{job_id}_{'start' if start else 'end'}{suffix}"
     frame_path = tmp_dir / frame_name
 
@@ -151,33 +158,51 @@ def worker_loop():
                 duration = int(payload.get("duration") or HAILUO_DEFAULT_DURATION)
                 resolution = str(payload.get("resolution") or "768")
                 enhance_prompt = bool(payload.get("enhance_prompt", True))
-                hailuo_request = None
+                hailuo_request = payload.get("hailuo_request")
+                job_set_id = job.remote_job_id or payload.get("hailuo_job_set_id")
+                start_frame_path = end_frame_path = None
+                cleanup_start = cleanup_end = False
 
                 if not motion_id:
                     raise ValueError("Hailuo transition requires motion_id")
 
-                from_asset = crud.get_asset(db, from_asset_id)
-                to_asset = crud.get_asset(db, to_asset_id)
-                if not from_asset or not to_asset:
-                    raise ValueError("Missing source assets for Hailuo transition")
+                if job_set_id:
+                    result = hailuo.poll_existing_job(
+                        job_set_id,
+                        poll_interval=HAILUO_POLL_INTERVAL,
+                        timeout=HAILUO_TIMEOUT,
+                        max_polls=HAILUO_MAX_POLLS,
+                    )
+                else:
+                    from_asset = crud.get_asset(db, from_asset_id)
+                    to_asset = crud.get_asset(db, to_asset_id)
+                    if not from_asset or not to_asset:
+                        raise ValueError("Missing source assets for Hailuo transition")
 
-                start_frame_path, cleanup_start = _prepare_frame(job.id, from_asset, start=True)
-                end_frame_path, cleanup_end = _prepare_frame(job.id, to_asset, start=False)
+                    start_frame_path, cleanup_start = _prepare_frame(job.id, from_asset, start=True)
+                    end_frame_path, cleanup_end = _prepare_frame(job.id, to_asset, start=False)
 
-                start_url = _publish_frame(start_frame_path)
-                end_url = _publish_frame(end_frame_path)
+                    start_url = _publish_frame(start_frame_path)
+                    end_url = _publish_frame(end_frame_path)
 
-                hailuo_request = {
-                    "start_image_url": start_url,
-                    "end_image_url": end_url,
-                    "prompt": prompt,
-                    "duration": duration,
-                    "motion_id": motion_id,
-                    "resolution": resolution,
-                    "enhance_prompt": enhance_prompt,
-                }
+                    hailuo_request = {
+                        "start_image_url": start_url,
+                        "end_image_url": end_url,
+                        "prompt": prompt,
+                        "duration": duration,
+                        "motion_id": motion_id,
+                        "resolution": resolution,
+                        "enhance_prompt": enhance_prompt,
+                    }
+                    payload["hailuo_request"] = hailuo_request
 
-                result = hailuo.run_transition(**hailuo_request)
+                    result = hailuo.run_transition(
+                        **hailuo_request,
+                        poll_interval=HAILUO_POLL_INTERVAL,
+                        timeout=HAILUO_TIMEOUT,
+                        max_polls=HAILUO_MAX_POLLS,
+                    )
+                    job_set_id = result.get("job_set_id")
 
                 result_url = result.get("result_url")
                 if not result_url:
@@ -198,22 +223,24 @@ def worker_loop():
                     project_id=job.project_id,
                 )
 
+                payload["hailuo_job_set_id"] = job_set_id
+                if hailuo_request:
+                    payload["hailuo_request"] = hailuo_request
+                payload["asset_id"] = new_asset.id
+
                 crud.update_job(
                     db,
                     job.id,
                     status="completed",
                     progress=100,
                     result_path=str(output_path),
-                    payload={
-                        "hailuo_job_set_id": result.get("job_set_id"),
-                        "hailuo_request": hailuo_request,
-                        "asset_id": new_asset.id,
-                    },
+                    payload=payload,
+                    remote_job_id=job_set_id,
                 )
 
                 # Clean up temp frames
                 for frame_path, should_cleanup in ((start_frame_path, cleanup_start), (end_frame_path, cleanup_end)):
-                    if should_cleanup:
+                    if frame_path and should_cleanup:
                         try:
                             Path(frame_path).unlink(missing_ok=True)
                         except OSError:
@@ -223,12 +250,43 @@ def worker_loop():
                 crud.update_job(db, job.id, status="failed", logs=f"unknown job type: {job.type}")
 
         except Exception as e:
-            error_log = {
-                "error": str(e),
-            }
-            if job.type == "hailuo-transition" and 'hailuo_request' in locals() and hailuo_request:
-                error_log["hailuo_request"] = hailuo_request
-            crud.update_job(db, job_id, status="failed", logs=json.dumps(error_log))
+            error_log = {"error": str(e)}
+            if job.type == "hailuo-transition":
+                if 'hailuo_request' in locals() and hailuo_request:
+                    error_log["hailuo_request"] = hailuo_request
+                    payload["hailuo_request"] = hailuo_request
+                if 'job_set_id' in locals() and job_set_id:
+                    error_log["hailuo_job_set_id"] = job_set_id
+                    payload["hailuo_job_set_id"] = job_set_id
+                    status_to_set = "failed"
+                    message = str(e).lower()
+                    if isinstance(e, hailuo.HailuoError) and (
+                        "timed out" in message
+                        or "client has been closed" in message
+                        or "maximum poll" in message
+                    ):
+                        status_to_set = "waiting"
+                    crud.update_job(
+                        db,
+                        job_id,
+                        status=status_to_set,
+                        logs=None if status_to_set == "waiting" else json.dumps(error_log),
+                        remote_job_id=job_set_id,
+                        payload=payload,
+                    )
+                    if status_to_set == "waiting":
+                        time.sleep(max(1.0, HAILUO_POLL_INTERVAL))
+                        job_q.put(job_id)
+                else:
+                    crud.update_job(
+                        db,
+                        job_id,
+                        status="failed",
+                        logs=json.dumps(error_log),
+                        payload=payload,
+                    )
+            else:
+                crud.update_job(db, job_id, status="failed", logs=json.dumps(error_log))
         finally:
             db.close()
             job_q.task_done()

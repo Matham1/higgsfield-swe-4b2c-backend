@@ -25,6 +25,7 @@ def serialize_job(job: models.Job) -> JobOut:
         result_path=job.result_path,
         logs=job.logs,
         payload=payload,
+        remote_job_id=job.remote_job_id,
     )
 
 

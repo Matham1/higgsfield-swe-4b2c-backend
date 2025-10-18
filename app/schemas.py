@@ -29,6 +29,7 @@ class JobOut(BaseModel):
     result_path: Optional[str] = None
     logs: Optional[str] = None
     payload: Optional[Dict[str, Any]] = None
+    remote_job_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -23,6 +23,10 @@ HIGGSFIELD_API_KEY=your_hf_api_key
 HIGGSFIELD_API_SECRET=your_hf_secret
 # base URL that Hailuo will use to pull extracted frames back (should be externally reachable in production)
 PUBLIC_BASE_URL=http://localhost:8000
+# optional polling/timeout tuning for Minimax Hailuo jobs (seconds)
+# HAILUO_TIMEOUT=600
+# HAILUO_POLL_INTERVAL=5
+# HAILUO_MAX_POLLS=0  # optional hard cap on poll attempts (0 = unlimited until timeout)
 # Optional: configure remote storage for extracted frames
 # R2_ACCESS_KEY_ID=...
 # R2_SECRET_ACCESS_KEY=...

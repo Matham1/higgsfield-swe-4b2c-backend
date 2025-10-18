@@ -1,18 +1,12 @@
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..config import (
-    BASE_DIR,
-    HIGGSFIELD_API_KEY,
-    HIGGSFIELD_API_SECRET,
-    HIGGSFIELD_MOTIONS_ENDPOINT,
-)
+from ..config import BASE_DIR
 from ..db import get_db
 from .. import crud, worker
 from ..schemas import HailuoTransitionRequest
@@ -22,40 +16,21 @@ router = APIRouter(prefix="/transitions", tags=["transitions"])
 MOTIONS_FILE = BASE_DIR / "docs" / "hailuo" / "motions.json"
 
 
-@lru_cache(maxsize=1)
 def _load_motions() -> List[Dict[str, Any]]:
-    remote = _fetch_remote_motions()
-    if remote:
-        return remote
+    version = None
+    try:
+        version = MOTIONS_FILE.stat().st_mtime_ns
+    except FileNotFoundError:
+        version = None
+    return _load_motions_cached(version)
 
+
+@lru_cache(maxsize=4)
+def _load_motions_cached(_version_key: Optional[int]) -> List[Dict[str, Any]]:
     try:
         return json.loads(MOTIONS_FILE.read_text())
     except FileNotFoundError:
         return []
-
-
-def _fetch_remote_motions() -> List[Dict[str, Any]]:
-    if not (HIGGSFIELD_API_KEY and HIGGSFIELD_API_SECRET and HIGGSFIELD_MOTIONS_ENDPOINT):
-        return []
-
-    try:
-        resp = httpx.get(
-            HIGGSFIELD_MOTIONS_ENDPOINT,
-            headers={
-                "hf-api-key": HIGGSFIELD_API_KEY,
-                "hf-secret": HIGGSFIELD_API_SECRET,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and "items" in data:
-            data = data.get("items")
-        if isinstance(data, list):
-            return data
-    except Exception:
-        pass
-    return []
 
 
 @router.get("/hailuo/motions")

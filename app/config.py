@@ -32,6 +32,9 @@ HIGGSFIELD_MOTIONS_ENDPOINT = os.environ.get(
 )
 HAILUO_DEFAULT_DURATION = int(os.environ.get("HAILUO_DEFAULT_DURATION", "2"))
 HAILUO_ENDPOINT = os.environ.get("HAILUO_ENDPOINT", "/v1/image2video/minimax")
+HAILUO_TIMEOUT = float(os.environ.get("HAILUO_TIMEOUT", "300"))
+HAILUO_POLL_INTERVAL = float(os.environ.get("HAILUO_POLL_INTERVAL", "3"))
+HAILUO_MAX_POLLS = int(os.environ.get("HAILUO_MAX_POLLS", "0"))
 
 # Number of worker threads to run for background jobs
 WORKER_THREADS = int(os.getenv("WORKER_THREADS", "1"))

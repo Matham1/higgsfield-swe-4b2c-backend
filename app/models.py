@@ -66,6 +66,7 @@ class Job(Base):
     payload = Column(Text, nullable=True)             # JSON text describing timeline or assets
     result_path = Column(String, nullable=True)       # path to final mp4
     logs = Column(Text, nullable=True)                # json list or plain text
+    remote_job_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     project = relationship("Project", back_populates="jobs")
