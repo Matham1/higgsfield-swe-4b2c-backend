@@ -1,0 +1,27 @@
+import uvicorn
+from fastapi import FastAPI
+from .db import init_db
+from .worker import start_worker_thread
+from .routers import uploads, renders, jobs
+from .config import STORAGE_DIR
+import os
+
+app = FastAPI(title="Video Editor Prototype")
+
+# include routers
+app.include_router(uploads.router)
+app.include_router(renders.router)
+app.include_router(jobs.router)
+
+@app.on_event("startup")
+def startup():
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    init_db()
+    start_worker_thread()
+
+@app.get("/")
+def root():
+    return {"ok": True}
+
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
