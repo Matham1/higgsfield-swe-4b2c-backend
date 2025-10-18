@@ -1,7 +1,7 @@
 import json
 import uuid
 from sqlalchemy.orm import Session
-from . import models
+from . import models, schemas
 
 def create_asset(db: Session, filename: str, master_path: str, project_id: str = None):
     aid = uuid.uuid4().hex
@@ -34,3 +34,23 @@ def get_job(db: Session, job_id: str):
 
 def list_jobs(db: Session, limit: int = 50):
     return db.query(models.Job).order_by(models.Job.created_at.desc()).limit(limit).all()
+
+def create_project(db: Session, project: schemas.ProjectCreate, user_id: str):
+    """Creates a new Project record in the database."""
+    
+    # 1. Create a unique ID
+    project_id = uuid.uuid4().hex
+    
+    # 2. Instantiate the SQLAlchemy model
+    db_project = models.Project(
+        id=project_id,
+        name=project.name,
+        user_id=user_id # Essential: link the project to the owner
+    )
+    
+    # 3. Add, commit, and refresh to get the generated timestamps
+    db.add(db_project)
+    db.commit()
+    db.refresh(db_project)
+    
+    return db_project

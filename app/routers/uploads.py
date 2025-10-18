@@ -24,7 +24,4 @@ async def upload_file(file: UploadFile = File(...), project_id: str = None, db: 
     job = crud.create_job(db, type="proxy", payload={"assets":[asset.id]}, project_id=project_id)
     worker.enqueue_job(job.id)
     return {"asset_id": asset.id, "master_path": asset.master_path, "proxy_job": job.id}
-    # create proxy job
-    job = crud.create_job(db, type="proxy", payload={"assets":[asset.id]}, project_id=project_id)
-    worker.enqueue_job(job.id)
-    return {"asset_id": asset.id, "master_path": asset.master_path, "proxy_job": job.id}
+    

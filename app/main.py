@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 from .db import init_db
 from .worker import start_worker_thread
-from .routers import uploads, renders, jobs
+from .routers import uploads, renders, jobs, projects
 from .config import STORAGE_DIR
 import os
 
@@ -12,6 +12,7 @@ app = FastAPI(title="Video Editor Prototype")
 app.include_router(uploads.router)
 app.include_router(renders.router)
 app.include_router(jobs.router)
+app.include_router(projects.router)
 
 @app.on_event("startup")
 def startup():
