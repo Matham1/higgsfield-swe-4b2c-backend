@@ -19,6 +19,7 @@ class Project(Base):
     
     # Relationship to Jobs: A Project may have multiple rendering/proxy jobs
     jobs = relationship("Job", back_populates="project")
+    timeline = relationship("TimelineState", back_populates="project", uselist=False, cascade="all, delete-orphan")
 
 
 class Asset(Base):
@@ -70,3 +71,13 @@ class Job(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     project = relationship("Project", back_populates="jobs")
+
+
+class TimelineState(Base):
+    __tablename__ = "timelines"
+
+    project_id = Column(String, ForeignKey("projects.id"), primary_key=True)
+    data = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    project = relationship("Project", back_populates="timeline")

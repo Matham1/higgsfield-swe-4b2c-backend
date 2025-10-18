@@ -1,4 +1,5 @@
 import os
+import mimetypes
 from pathlib import Path
 from shutil import copyfileobj
 from .config import STORAGE_DIR
@@ -19,3 +20,8 @@ def ensure_dir(path: str):
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def guess_mime_type(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or "application/octet-stream"

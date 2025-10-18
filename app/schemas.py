@@ -12,6 +12,9 @@ class AssetOut(BaseModel):
     master_path: str
     proxy_path: Optional[str] = None
     asset_type: Optional[str] = "video"
+    duration: Optional[float] = None
+    frame_rate: Optional[float] = None
+    download_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,6 +76,18 @@ class Timeline(BaseModel):
 class RenderCreate(BaseModel):
     project_id: str
     timeline: Timeline
+
+
+class TimelineStateUpdate(BaseModel):
+    data: Dict[str, Any]
+
+
+class TimelineStateOut(BaseModel):
+    project_id: str
+    data: Dict[str, Any]
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 class ProjectBase(BaseModel):
     """Base schema for project creation/update (input)."""

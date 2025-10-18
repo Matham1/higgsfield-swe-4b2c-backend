@@ -30,7 +30,17 @@ def _ensure_project(db: Session, project_id: Optional[str]) -> str:
     return project.id
 
 
-def create_asset(db: Session, filename: str, master_path: str, project_id: str = None, asset_type: str = "video"):
+def create_asset(
+    db: Session,
+    filename: str,
+    master_path: str,
+    project_id: str = None,
+    asset_type: str = "video",
+    *,
+    duration: Optional[float] = None,
+    frame_rate: Optional[float] = None,
+    metadata: Optional[dict] = None,
+):
     project_id = _ensure_project(db, project_id)
     aid = uuid.uuid4().hex
     asset = models.Asset(
@@ -39,7 +49,11 @@ def create_asset(db: Session, filename: str, master_path: str, project_id: str =
         master_path=str(master_path),
         project_id=project_id,
         asset_type=asset_type,
+        duration=duration,
+        frame_rate=frame_rate,
     )
+    if metadata is not None:
+        asset.metadata_json = json.dumps(metadata)
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
 
@@ -105,3 +119,24 @@ def get_all_assets(db: Session, project_id: Optional[str] = None):
         query = query.filter(models.Asset.project_id == project_id)
         
     return query.all()
+
+
+def get_project(db: Session, project_id: str):
+    return db.query(models.Project).get(project_id)
+
+
+def get_timeline_state(db: Session, project_id: str) -> Optional[models.TimelineState]:
+    return db.query(models.TimelineState).get(project_id)
+
+
+def upsert_timeline_state(db: Session, project_id: str, data: dict) -> models.TimelineState:
+    state = get_timeline_state(db, project_id)
+    payload = json.dumps(data)
+    if state:
+        state.data = payload
+    else:
+        state = models.TimelineState(project_id=project_id, data=payload)
+        db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state

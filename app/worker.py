@@ -1,4 +1,5 @@
 import threading, queue, time, json, os
+import concurrent.futures
 from sqlalchemy.orm import Session
 from .db import SessionLocal
 from . import crud, tasks, higgsfield, render, hailuo
@@ -26,6 +27,7 @@ import uuid
 from urllib.parse import quote
 
 job_q = queue.Queue()
+hailuo_poll_q = queue.Queue()
 
 _r2_client = None
 
@@ -66,13 +68,20 @@ def _publish_frame(path: Path) -> str:
 def enqueue_job(job_id: str):
     job_q.put(job_id)
 
+
+def _enqueue_hailuo_poll(job_id: str):
+    hailuo_poll_q.put(job_id)
+
 def _to_public_url(path: Path) -> str:
     try:
         rel = path.relative_to(STORAGE_DIR)
     except ValueError:
         rel = path.name
-    url_path = quote(str(rel).replace(os.sep, "/"))
-    return f"{PUBLIC_BASE_URL.rstrip('/')}/storage/{url_path}"
+    rel_str = str(rel).replace(os.sep, "/")
+    if rel_str.startswith("frames/"):
+        frame_path = rel_str[len("frames/") :]
+        return f"{PUBLIC_BASE_URL.rstrip('/')}/frames/{quote(frame_path)}"
+    raise RuntimeError(f"Unsupported public URL path: {path}")
 
 
 def _prepare_frame(job_id: str, asset, *, start: bool) -> tuple[Path, bool]:
@@ -101,13 +110,32 @@ def _prepare_frame(job_id: str, asset, *, start: bool) -> tuple[Path, bool]:
 
     return frame_path, True
 
+def _restore_pending_jobs():
+    from . import models
+
+    db: Session = SessionLocal()
+    try:
+        pending = (
+            db.query(models.Job)
+            .filter(models.Job.status.in_(["queued", "waiting", "running"]))
+            .order_by(models.Job.created_at.asc())
+            .all()
+        )
+        for job in pending:
+            if job.type == "hailuo-transition" and (job.remote_job_id or (job.payload and "hailuo_job_set_id" in (json.loads(job.payload or "{}") or {}))):
+                _enqueue_hailuo_poll(job.id)
+            job_q.put(job.id)
+    finally:
+        db.close()
+
+
 def worker_loop():
     while True:
         job_id = job_q.get()
         db: Session = SessionLocal()
         try:
             job = crud.get_job(db, job_id)
-            if not job or job.status not in ["queued", "waiting"]:
+            if not job or job.status not in ["queued", "waiting", "running"]:
                 db.close()
                 job_q.task_done()
                 continue
@@ -117,16 +145,31 @@ def worker_loop():
 
             if job.type == "proxy":
                 assets = payload.get("assets", [])
-                for i, aid in enumerate(assets):
-                    asset = crud.get_asset(db, aid)
-                    if not asset: continue
-                    master = asset.master_path
-                    proxy = master.replace("/assets/", "/assets/proxy_")
-                    tasks.create_proxy(master, proxy)
-                    asset.proxy_path = proxy
-                    db.add(asset)
-                    db.commit()
-                    crud.update_job(db, job.id, progress=int(((i+1)/len(assets))*100))
+                total = max(len(assets), 1)
+
+                def _process_proxy(aid: str):
+                    local_db: Session = SessionLocal()
+                    try:
+                        asset = crud.get_asset(local_db, aid)
+                        if not asset:
+                            return False
+                        master = asset.master_path
+                        proxy = master.replace("/assets/", "/assets/proxy_")
+                        tasks.create_proxy(master, proxy)
+                        asset.proxy_path = proxy
+                        local_db.add(asset)
+                        local_db.commit()
+                        return True
+                    finally:
+                        local_db.close()
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(assets) or 1)) as executor:
+                    completed = 0
+                    for success in executor.map(_process_proxy, assets):
+                        completed += 1
+                        progress = int((completed / total) * 100)
+                        crud.update_job(db, job.id, progress=progress)
+
                 crud.update_job(db, job.id, status="completed", progress=100)
 
             elif job.type == "render":
@@ -166,135 +209,206 @@ def worker_loop():
                 if not motion_id:
                     raise ValueError("Hailuo transition requires motion_id")
 
-                if job_set_id:
-                    result = hailuo.poll_existing_job(
-                        job_set_id,
-                        poll_interval=HAILUO_POLL_INTERVAL,
-                        timeout=HAILUO_TIMEOUT,
-                        max_polls=HAILUO_MAX_POLLS,
-                    )
-                else:
+                if payload.get("asset_id"):
+                    asset = crud.get_asset(db, payload["asset_id"])
+                    if asset and Path(asset.master_path).exists():
+                        crud.update_job(
+                            db,
+                            job.id,
+                            status="completed",
+                            progress=100,
+                            result_path=asset.master_path,
+                        )
+                        continue
+
+                if not job_set_id:
                     from_asset = crud.get_asset(db, from_asset_id)
                     to_asset = crud.get_asset(db, to_asset_id)
                     if not from_asset or not to_asset:
                         raise ValueError("Missing source assets for Hailuo transition")
 
-                    start_frame_path, cleanup_start = _prepare_frame(job.id, from_asset, start=True)
-                    end_frame_path, cleanup_end = _prepare_frame(job.id, to_asset, start=False)
+                    if not hailuo_request:
+                        start_frame_path, cleanup_start = _prepare_frame(job.id, from_asset, start=True)
+                        end_frame_path, cleanup_end = _prepare_frame(job.id, to_asset, start=False)
 
-                    start_url = _publish_frame(start_frame_path)
-                    end_url = _publish_frame(end_frame_path)
+                        start_url = _publish_frame(start_frame_path)
+                        end_url = _publish_frame(end_frame_path)
 
-                    hailuo_request = {
-                        "start_image_url": start_url,
-                        "end_image_url": end_url,
-                        "prompt": prompt,
-                        "duration": duration,
-                        "motion_id": motion_id,
-                        "resolution": resolution,
-                        "enhance_prompt": enhance_prompt,
-                    }
-                    payload["hailuo_request"] = hailuo_request
+                        hailuo_request = {
+                            "start_image_url": start_url,
+                            "end_image_url": end_url,
+                            "prompt": prompt,
+                            "duration": duration,
+                            "motion_id": motion_id,
+                            "resolution": resolution,
+                            "enhance_prompt": enhance_prompt,
+                        }
+                        payload["hailuo_request"] = hailuo_request
 
-                    result = hailuo.run_transition(
-                        **hailuo_request,
-                        poll_interval=HAILUO_POLL_INTERVAL,
-                        timeout=HAILUO_TIMEOUT,
-                        max_polls=HAILUO_MAX_POLLS,
+                    start_response = hailuo.start_transition(**hailuo_request)
+                    job_set_id = start_response.get("job_set_id")
+                    payload["hailuo_job_set_id"] = job_set_id
+                    crud.update_job(
+                        db,
+                        job.id,
+                        status="waiting",
+                        payload=payload,
+                        remote_job_id=job_set_id,
+                        logs=json.dumps({"hailuo_request": hailuo_request, "hailuo_response": start_response}),
                     )
-                    job_set_id = result.get("job_set_id")
+                else:
+                    crud.update_job(db, job.id, status="waiting", payload=payload, remote_job_id=job_set_id)
 
-                result_url = result.get("result_url")
-                if not result_url:
-                    raise RuntimeError("Hailuo did not return a downloadable result URL")
-
-                output_dir = STORAGE_DIR / "assets"
-                output_dir.mkdir(parents=True, exist_ok=True)
-                output_path = output_dir / f"{job.id}_hailuo_transition.mp4"
-                with httpx.Client(timeout=120) as client:
-                    resp = client.get(result_url)
-                    resp.raise_for_status()
-                    output_path.write_bytes(resp.content)
-
-                new_asset = crud.create_asset(
-                    db,
-                    filename=output_path.name,
-                    master_path=str(output_path),
-                    project_id=job.project_id,
-                )
-
-                payload["hailuo_job_set_id"] = job_set_id
-                if hailuo_request:
-                    payload["hailuo_request"] = hailuo_request
-                payload["asset_id"] = new_asset.id
-
-                crud.update_job(
-                    db,
-                    job.id,
-                    status="completed",
-                    progress=100,
-                    result_path=str(output_path),
-                    payload=payload,
-                    remote_job_id=job_set_id,
-                )
-
-                # Clean up temp frames
-                for frame_path, should_cleanup in ((start_frame_path, cleanup_start), (end_frame_path, cleanup_end)):
-                    if frame_path and should_cleanup:
-                        try:
-                            Path(frame_path).unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                _enqueue_hailuo_poll(job.id)
+                continue
 
             else:
                 crud.update_job(db, job.id, status="failed", logs=f"unknown job type: {job.type}")
 
         except Exception as e:
             error_log = {"error": str(e)}
-            if job.type == "hailuo-transition":
-                if 'hailuo_request' in locals() and hailuo_request:
-                    error_log["hailuo_request"] = hailuo_request
-                    payload["hailuo_request"] = hailuo_request
-                if 'job_set_id' in locals() and job_set_id:
-                    error_log["hailuo_job_set_id"] = job_set_id
-                    payload["hailuo_job_set_id"] = job_set_id
-                    status_to_set = "failed"
-                    message = str(e).lower()
-                    if isinstance(e, hailuo.HailuoError) and (
-                        "timed out" in message
-                        or "client has been closed" in message
-                        or "maximum poll" in message
-                    ):
-                        status_to_set = "waiting"
-                    crud.update_job(
-                        db,
-                        job_id,
-                        status=status_to_set,
-                        logs=None if status_to_set == "waiting" else json.dumps(error_log),
-                        remote_job_id=job_set_id,
-                        payload=payload,
-                    )
-                    if status_to_set == "waiting":
-                        time.sleep(max(1.0, HAILUO_POLL_INTERVAL))
-                        job_q.put(job_id)
-                else:
-                    crud.update_job(
-                        db,
-                        job_id,
-                        status="failed",
-                        logs=json.dumps(error_log),
-                        payload=payload,
-                    )
-            else:
-                crud.update_job(db, job_id, status="failed", logs=json.dumps(error_log))
+            if job:
+                crud.update_job(db, job.id, status="failed", logs=json.dumps(error_log))
         finally:
             db.close()
             job_q.task_done()
-        
-        time.sleep(0.1)
+
+
+def _complete_hailuo_transition(
+    db: Session,
+    *,
+    job,
+    payload: Dict,
+    job_set_id: str,
+    hailuo_request: Dict,
+    result_url: str,
+):
+    output_dir = STORAGE_DIR / "assets"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{job.id}_hailuo_transition.mp4"
+
+    if result_url:
+        with httpx.Client(timeout=120) as client:
+            resp = client.get(result_url)
+            resp.raise_for_status()
+            output_path.write_bytes(resp.content)
+
+    media_info = tasks.probe_media(str(output_path))
+
+    new_asset = crud.create_asset(
+        db,
+        filename=output_path.name,
+        master_path=str(output_path),
+        project_id=job.project_id,
+        duration=media_info.get("duration") if media_info else None,
+        frame_rate=media_info.get("frame_rate") if media_info else None,
+        metadata=media_info or None,
+    )
+
+    payload["hailuo_job_set_id"] = job_set_id
+    if hailuo_request:
+        payload["hailuo_request"] = hailuo_request
+    payload["asset_id"] = new_asset.id
+
+    crud.update_job(
+        db,
+        job.id,
+        status="completed",
+        progress=100,
+        result_path=str(output_path),
+        payload=payload,
+        remote_job_id=job_set_id,
+    )
+
+
+def hailuo_poll_loop():
+    while True:
+        job_id = hailuo_poll_q.get()
+        db: Session = SessionLocal()
+        try:
+            job = crud.get_job(db, job_id)
+            if not job:
+                continue
+
+            payload = json.loads(job.payload or "{}")
+            job_set_id = job.remote_job_id or payload.get("hailuo_job_set_id")
+            hailuo_request = payload.get("hailuo_request") or {}
+
+            if payload.get("asset_id"):
+                asset = crud.get_asset(db, payload["asset_id"])
+                if asset and Path(asset.master_path).exists():
+                    crud.update_job(
+                        db,
+                        job.id,
+                        status="completed",
+                        progress=100,
+                        result_path=asset.master_path,
+                    )
+                    continue
+
+            if not job_set_id:
+                continue
+
+            try:
+                result = hailuo.poll_existing_job(
+                    job_set_id,
+                    poll_interval=HAILUO_POLL_INTERVAL,
+                    timeout=HAILUO_TIMEOUT,
+                    max_polls=HAILUO_MAX_POLLS,
+                )
+            except hailuo.HailuoError as exc:
+                message = str(exc).lower()
+                status_to_set = "failed"
+                if any(token in message for token in ("timed out", "maximum poll", "client has been closed")):
+                    status_to_set = "waiting"
+                crud.update_job(
+                    db,
+                    job.id,
+                    status=status_to_set,
+                    logs=json.dumps({
+                        "error": str(exc),
+                        "hailuo_job_set_id": job_set_id,
+                        "hailuo_request": hailuo_request,
+                    }),
+                    remote_job_id=job_set_id,
+                    payload=payload,
+                )
+                if status_to_set == "waiting":
+                    time.sleep(max(1.0, HAILUO_POLL_INTERVAL))
+                    _enqueue_hailuo_poll(job.id)
+                continue
+
+            result_url = result.get("result_url")
+            if not result_url:
+                raise RuntimeError("Hailuo did not return a downloadable result URL")
+
+            _complete_hailuo_transition(
+                db,
+                job=job,
+                payload=payload,
+                job_set_id=job_set_id,
+                hailuo_request=hailuo_request,
+                result_url=result_url,
+            )
+
+        except Exception as exc:
+            if job_id:
+                crud.update_job(
+                    db,
+                    job_id,
+                    status="failed",
+                    logs=json.dumps({"error": str(exc)}),
+                )
+        finally:
+            db.close()
+            hailuo_poll_q.task_done()
 
 def start_worker_thread():
     from .config import WORKER_THREADS
+    _restore_pending_jobs()
     for i in range(WORKER_THREADS):
         t = threading.Thread(target=worker_loop, daemon=True, name=f"Worker-{i}")
         t.start()
+    polling_threads = max(1, min(2, WORKER_THREADS))
+    for i in range(polling_threads):
+        threading.Thread(target=hailuo_poll_loop, daemon=True, name=f"HailuoPoller-{i}").start()

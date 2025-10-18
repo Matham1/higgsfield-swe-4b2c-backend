@@ -1,4 +1,5 @@
 import time
+import threading
 from typing import Any, Dict, Optional
 
 import httpx
@@ -24,6 +25,17 @@ def _headers() -> Dict[str, str]:
         "hf-secret": HIGGSFIELD_API_SECRET,
         "content-type": "application/json",
     }
+
+
+_thread_local = threading.local()
+
+
+def _client() -> httpx.Client:
+    client = getattr(_thread_local, "hailuo_client", None)
+    if client is None or client.is_closed:
+        client = httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0, read=120.0))
+        _thread_local.hailuo_client = client
+    return client
 
 
 def start_transition(
@@ -54,11 +66,16 @@ def start_transition(
     if HAILUO_MODEL_ID:
         payload["model"] = HAILUO_MODEL_ID
 
-    with httpx.Client(timeout=120) as client:
-        resp = client.post(f"{HIGGSFIELD_PLATFORM_BASE}{HAILUO_ENDPOINT}", json=payload, headers=_headers())
-        if resp.status_code >= 400:
-            raise HailuoError(f"Hailuo request failed ({resp.status_code}): {resp.text}")
-        data = resp.json()
+    client = _client()
+    resp = client.post(
+        f"{HIGGSFIELD_PLATFORM_BASE}{HAILUO_ENDPOINT}",
+        json=payload,
+        headers=_headers(),
+        timeout=120,
+    )
+    if resp.status_code >= 400:
+        raise HailuoError(f"Hailuo request failed ({resp.status_code}): {resp.text}")
+    data = resp.json()
 
     job_set_id = data.get("job_set_id") or data.get("id")
     if not job_set_id:
@@ -69,10 +86,14 @@ def start_transition(
 
 
 def fetch_job_set(job_set_id: str) -> Dict[str, Any]:
-    with httpx.Client(timeout=60) as client:
-        resp = client.get(f"{HIGGSFIELD_PLATFORM_BASE}/v1/job-sets/{job_set_id}", headers=_headers())
-        resp.raise_for_status()
-        return resp.json()
+    client = _client()
+    resp = client.get(
+        f"{HIGGSFIELD_PLATFORM_BASE}/v1/job-sets/{job_set_id}",
+        headers=_headers(),
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def extract_result(job_set: Dict[str, Any]) -> Dict[str, Optional[str]]:

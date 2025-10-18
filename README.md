@@ -43,6 +43,7 @@ PUBLIC_BASE_URL=http://localhost:8000
 
 - `POST /upload/` — upload media assets; saves them to `storage/assets/` and enqueues proxy generation.
 - `GET /upload/{asset_id}` — fetch metadata for an uploaded/ generated asset.
+- `GET /upload/{asset_id}/file` — download the binary contents for an asset. Direct access under `/storage` is disabled; use the signed route returned as `download_url` from upload/get-asset responses.
 - `GET /transitions/hailuo/motions` — returns the cached Minimax Hailuo 02 motion catalogue (id, name, description, etc.).
 - `POST /transitions/hailuo` — queue a Minimax Hailuo transition job using the last frame of one asset and the first frame of another. **`motion_id` is required** and must come from the motion catalogue above. Payload shape:
 
@@ -59,7 +60,8 @@ PUBLIC_BASE_URL=http://localhost:8000
   }
   ```
 
-  Response returns `{ "job_id": "job_xxx" }`; poll `/jobs/{job_id}` until `status` is `completed`, then inspect `payload.asset_id` for the generated transition asset. Static files are served from `/storage/...` for direct download.
+  Response returns `{ "job_id": "job_xxx" }`; poll `/jobs/{job_id}` until `status` is `completed`, then inspect `payload.asset_id` for the generated transition asset. Download the resulting media through `GET /upload/{asset_id}/file` or via the `download_url` returned by the metadata endpoint.
+- `GET /projects/{project_id}/timeline` / `PUT /projects/{project_id}/timeline` — fetch or persist timeline state used by the frontend editor.
 
 upload a file:
 
@@ -83,4 +85,20 @@ POST /renders/ with JSON:
 }
 
 ```bash
-poll job status: GET /renders/{job_id}; download result from result_path.
+  poll job status: GET /renders/{job_id}; download result from result_path.
+
+## Background Worker Behavior
+
+- Pending jobs survive restarts. When the FastAPI app boots, `start_worker_thread()` scans the database for `queued`, `waiting`, or `running` jobs and re-enqueues them so no work is lost during deploys or crashes.
+- Minimax (Hailuo) transitions now run in two stages: the main worker uploads frames and queues the remote job, while a dedicated poller thread monitors completion and finalizes assets. This prevents long-running polls from blocking proxy or render work.
+- Hailuo jobs are idempotent. If a job already produced an asset on a previous attempt, reruns simply mark it complete without re-downloading.
+
+## Frontend Timeline Persistence
+
+- The editor now hydrates and persists its timeline to the backend. Interactions with clips automatically sync through `PUT /projects/{project_id}/timeline`, keeping sessions durable across refreshes.
+- Asset metadata (duration, frame rate) is captured on upload via `ffprobe`. Durations feed into the UI so default clip lengths align with the source media.
+
+## Development Tips
+
+- Install the updated lint dependencies (`pnpm install`) and run `pnpm lint` to catch style or type issues locally.
+- Ensure both `ffmpeg` and `ffprobe` binaries are available in your PATH so metadata extraction and proxy generation succeed.

@@ -41,3 +41,34 @@ def get_projects(
     if not projects:
         raise HTTPException(status_code=404, detail="No projects found")
     return projects
+
+
+@router.get("/{project_id}/timeline", response_model=schemas.TimelineStateOut)
+def get_project_timeline(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    project = crud.get_project(db, project_id)
+    if not project or project.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = crud.get_timeline_state(db, project_id)
+    if not state:
+        return schemas.TimelineStateOut(project_id=project_id, data={}, updated_at=None)
+    return schemas.TimelineStateOut.model_validate(state)
+
+
+@router.put("/{project_id}/timeline", response_model=schemas.TimelineStateOut)
+def upsert_project_timeline(
+    project_id: str,
+    payload: schemas.TimelineStateUpdate,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    project = crud.get_project(db, project_id)
+    if not project or project.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = crud.upsert_timeline_state(db, project_id, payload.data)
+    return schemas.TimelineStateOut.model_validate(state)

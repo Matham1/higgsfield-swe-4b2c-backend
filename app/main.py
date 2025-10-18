@@ -1,12 +1,11 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from .db import init_db
 from .worker import start_worker_thread
 from .routers import uploads, renders, jobs, projects, transitions
 from .config import STORAGE_DIR
-import os
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Video Editor Prototype")
 
@@ -25,11 +24,13 @@ app.include_router(jobs.router)
 app.include_router(projects.router)
 app.include_router(transitions.router)
 
-app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
+FRAMES_DIR = STORAGE_DIR / "frames"
+app.mount("/frames", StaticFiles(directory=FRAMES_DIR, check_dir=False), name="frames")
 
 @app.on_event("startup")
 def startup():
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     start_worker_thread()
 

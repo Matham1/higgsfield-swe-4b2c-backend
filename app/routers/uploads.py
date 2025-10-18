@@ -1,8 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from ..db import get_db
-from .. import crud, storage, worker, schemas
+from .. import crud, storage, worker, schemas, tasks
 import uuid, os
+from pathlib import Path
 from typing import List, Optional
 
 router = APIRouter(prefix="/upload", tags=["uploads"])
@@ -35,22 +37,33 @@ async def upload_file(file: UploadFile = File(...), project_id: str = None, db: 
         elif file.content_type.startswith("audio/"):
             asset_type = "audio"
 
+    media_info = tasks.probe_media(str(dest))
+    duration = media_info.get("duration") if media_info else None
+    frame_rate = media_info.get("frame_rate") if media_info else None
+
     asset = crud.create_asset(
         db,
         filename=file.filename,
         master_path=str(dest),
         project_id=project_id,
         asset_type=asset_type,
+        duration=duration,
+        frame_rate=frame_rate,
+        metadata=media_info or None,
     )
     # create proxy job
     job = crud.create_job(db, type="proxy", payload={"assets": [asset.id]}, project_id=asset.project_id)
     worker.enqueue_job(job.id)
+    download_url = f"/upload/{asset.id}/file"
     return {
         "asset_id": asset.id,
         "master_path": asset.master_path,
         "asset_type": asset.asset_type,
         "project_id": asset.project_id,
         "proxy_job": job.id,
+        "download_url": download_url,
+        "duration": duration,
+        "frame_rate": frame_rate,
     }
 
 
@@ -62,5 +75,21 @@ def get_asset(asset_id: str, db: Session = Depends(get_db)):
     asset = crud.get_asset(db, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    return asset
+    asset_out = schemas.AssetOut.model_validate(asset)
+    asset_out.download_url = f"/upload/{asset.id}/file"
+    return asset_out
+
+
+@router.get("/{asset_id}/file")
+def download_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = crud.get_asset(db, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    path = Path(asset.master_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Asset file missing")
+
+    media_type = storage.guess_mime_type(path)
+    return FileResponse(path, media_type=media_type, filename=asset.filename or path.name)
     
