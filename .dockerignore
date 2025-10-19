@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-selfcheck.json
+.DS_Store
+.git
+.vscode
+docs/
+storage/
+README.md
+AGENTS.md
+.env
