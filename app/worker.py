@@ -65,6 +65,19 @@ def _publish_frame(path: Path) -> str:
 
     return _to_public_url(path)
 
+def _publish_render(path: Path) -> str:
+    client = _get_r2_client()
+    if client:
+        key = f"renders/{path.name}"
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        client.upload_file(str(path), R2_BUCKET_NAME, key, ExtraArgs={"ContentType": content_type})
+        base = R2_PUBLIC_DOMAIN.rstrip("/") if R2_PUBLIC_DOMAIN else ""
+        if base and not base.startswith("http://") and not base.startswith("https://"):
+            base = f"https://{base}"
+        return f"{base}/{key}"
+    return _to_public_url(path)
+
+
 def enqueue_job(job_id: str):
     job_q.put(job_id)
 
@@ -81,6 +94,9 @@ def _to_public_url(path: Path) -> str:
     if rel_str.startswith("frames/"):
         frame_path = rel_str[len("frames/") :]
         return f"{PUBLIC_BASE_URL.rstrip('/')}/frames/{quote(frame_path)}"
+    if rel_str.startswith("renders/"):
+        render_path = rel_str[len("renders/") :]
+        return f"{PUBLIC_BASE_URL.rstrip('/')}/renders/{quote(render_path)}"
     raise RuntimeError(f"Unsupported public URL path: {path}")
 
 
@@ -175,12 +191,14 @@ def worker_loop():
             elif job.type == "render":
                 command, output_path = render.build_ffmpeg_command(db, payload, job.id, preview=False)
                 logs = render.run_ffmpeg_render(command, job.id)
-                crud.update_job(db, job.id, status="completed", progress=100, result_path=output_path, logs=logs)
+                public_url = _publish_render(Path(output_path))
+                crud.update_job(db, job.id, status="completed", progress=100, result_path=public_url, logs=logs)
 
             elif job.type == "preview-render":
                 command, output_path = render.build_ffmpeg_command(db, payload, job.id, preview=True)
                 logs = render.run_ffmpeg_render(command, job.id)
-                crud.update_job(db, job.id, status="completed", progress=100, result_path=output_path, logs=logs)
+                public_url = _publish_render(Path(output_path))
+                crud.update_job(db, job.id, status="completed", progress=100, result_path=public_url, logs=logs)
             
             elif job.type == "higgsfield-generate":
                 # Example of a generative task
