@@ -113,11 +113,12 @@ def get_all_assets(db: Session, project_id: Optional[str] = None):
     Returns a list of models.Asset objects.
     """
     query = db.query(models.Asset)
-    
-    # Apply optional filtering
     if project_id:
-        query = query.filter(models.Asset.project_id == project_id)
-        
+        # Debug: print project_id and count of assets for troubleshooting
+        print(f"Filtering assets by project_id: {project_id}")
+        assets = query.filter(models.Asset.project_id == project_id).all()
+        print(f"Found {len(assets)} assets for project_id {project_id}")
+        return assets
     return query.all()
 
 

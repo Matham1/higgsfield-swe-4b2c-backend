@@ -1,6 +1,7 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import json
 
 class AssetCreate(BaseModel):
     filename: str
@@ -35,6 +36,23 @@ class JobOut(BaseModel):
     remote_job_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='before')
+    @classmethod
+    def parse_json_payload(cls, data: Any) -> Any:
+        if hasattr(data, 'payload') and isinstance(data.payload, str):
+            # Create a mutable copy to modify
+            if hasattr(data, '_mapping'): # SQLAlchemy model object
+                mutable_data = dict(data._mapping)
+            else: # Regular object
+                mutable_data = data.__dict__.copy()
+            
+            try:
+                mutable_data['payload'] = json.loads(mutable_data['payload'])
+            except json.JSONDecodeError:
+                mutable_data['payload'] = None # Or handle error appropriately
+            return mutable_data
+        return data
 
 
 class Effect(BaseModel):
@@ -75,8 +93,6 @@ class Timeline(BaseModel):
 
 class RenderCreate(BaseModel):
     project_id: str
-    timeline: Timeline
-
 
 class TimelineStateUpdate(BaseModel):
     data: Dict[str, Any]
@@ -88,6 +104,20 @@ class TimelineStateOut(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='before')
+    @classmethod
+    def parse_json_data(cls, data: Any) -> Any:
+        if hasattr(data, 'data') and isinstance(data.data, str):
+            # Create a mutable copy to modify
+            if hasattr(data, '_mapping'): # SQLAlchemy model object
+                mutable_data = dict(data._mapping)
+            else: # Regular object
+                mutable_data = data.__dict__.copy()
+            
+            mutable_data['data'] = json.loads(mutable_data['data'])
+            return mutable_data
+        return data
 
 class ProjectBase(BaseModel):
     """Base schema for project creation/update (input)."""

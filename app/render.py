@@ -57,21 +57,22 @@ def build_ffmpeg_command(db: Session, timeline: Dict[str, Any], job_id: str) -> 
         inputs.extend(['-i', asset_path])
         # Calculate clip duration from source points
         clip_duration = clip['source_out'] - clip['source_in']
-        # Add trim filter and setpts to correct timestamps
-        filter_complex.append(f'[{i}:v]trim=start={clip["source_in"]}:duration={clip_duration},setpts=PTS-STARTPTS[v{i}]')
+        
+        # Add scaling, trim filter, and setpts to correct timestamps for each clip
+        filter_complex.append(f'[{i}:v]scale={output_resolution},trim=start={clip["source_in"]}:duration={clip_duration},setpts=PTS-STARTPTS[v{i}]')
         if has_audio:
             filter_complex.append(f'[{i}:a]atrim=start={clip["source_in"]}:duration={clip_duration},asetpts=PTS-STARTPTS[a{i}]')
 
-    # Concatenate all trimmed clips
+    # Concatenate all processed clips
     video_chain = ''.join(f'[v{i}]' for i in range(len(video_clips)))
-    filter_complex.append(f'{video_chain}concat=n={len(video_clips)}:v=1:a=0[vcont]')
+    filter_complex.append(f'{video_chain}concat=n={len(video_clips)}:v=1:a=0[vout]')
     
     if has_audio:
         audio_chain = ''.join(f'[a{i}]' for i in range(len(video_clips)))
         filter_complex.append(f'{audio_chain}concat=n={len(video_clips)}:v=0:a=1[aout]')
     
-    # Add scaling after concatenation
-    filter_complex.append(f'[vcont]scale={output_resolution}[vout]')
+    # Scaling is now done per-clip, so remove the final scaling filter
+    # filter_complex.append(f'[vcont]scale={output_resolution}[vout]')
 
     output_dir = "storage/renders"
     os.makedirs(output_dir, exist_ok=True)

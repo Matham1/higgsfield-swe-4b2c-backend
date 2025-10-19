@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db import init_db
 from .worker import start_worker_thread
-from .routers import uploads, renders, jobs, projects, transitions
+from .routers import uploads, renders, jobs, projects, transitions, assets
 from .config import STORAGE_DIR
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +23,7 @@ app.include_router(renders.router)
 app.include_router(jobs.router)
 app.include_router(projects.router)
 app.include_router(transitions.router)
+app.include_router(assets.router)
 
 FRAMES_DIR = STORAGE_DIR / "frames"
 app.mount("/frames", StaticFiles(directory=FRAMES_DIR, check_dir=False), name="frames")

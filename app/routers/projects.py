@@ -13,20 +13,17 @@ def get_current_user_id() -> str:
 def create_new_project(
     project_data: schemas.ProjectCreate,
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id) # Inject the owner ID
+    user_id: str = Depends(get_current_user_id)
 ):
-    """
-    Creates a new video editing project for the authenticated user.
-    """
-
-    # 1. Call the CRUD function to save the project
-    db_project = crud.create_project(
-        db=db, 
-        project=project_data, 
-        user_id=user_id
-    )
+    """Creates a new video editing project for the authenticated user."""
+    print(f"Creating project with name: {project_data.name} for user: {user_id}")  # Debug log
     
-    # 2. Return the created project object
+    db_project = crud.create_project(db=db, project=project_data, user_id=user_id)
+    print(f"Created project with ID: {db_project.id}")  # Debug log
+    
+    if not db_project.id:
+        raise HTTPException(status_code=500, detail="Failed to generate project ID")
+        
     return db_project
 
 @router.get("/", response_model=List[schemas.Project])
@@ -34,9 +31,7 @@ def get_projects(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
-    """
-    Retrieve all projects belonging to the authenticated user.
-    """
+    print(f"Fetching projects for user: {user_id}")  # Debug log
     projects = crud.get_projects_by_user(db=db, user_id=user_id)
     if not projects:
         raise HTTPException(status_code=404, detail="No projects found")

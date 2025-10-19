@@ -2,17 +2,29 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from ..db import get_db
-from .. import crud, storage, worker, schemas, tasks
+from .. import crud, storage, worker, schemas, tasks, models
 import uuid, os
 from pathlib import Path
 from typing import List, Optional
+from ..schemas import AssetOut
 
 router = APIRouter(prefix="/upload", tags=["uploads"])
 
 CHUNK_SIZE = 1024 * 1024  # 1MB
 
 @router.post("/")
-async def upload_file(file: UploadFile = File(...), project_id: str = None, db: Session = Depends(get_db)):
+async def upload_file(
+    file: UploadFile = File(...), 
+    project_id: str = None, 
+    db: Session = Depends(get_db)
+):
+    if project_id:
+        # Verify project exists before uploading
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+        print(f"Uploading to project: {project_id}")  # Debug log
+
     # create deterministic unique filename
     uid = uuid.uuid4().hex
     ext = os.path.splitext(file.filename)[1] or ".mp4"
@@ -65,10 +77,6 @@ async def upload_file(file: UploadFile = File(...), project_id: str = None, db: 
         "duration": duration,
         "frame_rate": frame_rate,
     }
-
-
-from ..schemas import AssetOut
-
 
 @router.get("/{asset_id}", response_model=AssetOut)
 def get_asset(asset_id: str, db: Session = Depends(get_db)):
