@@ -8,23 +8,36 @@ from sqlalchemy.orm import Session
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_asset_path(db: Session, asset_id: str) -> str:
+def get_asset_path(db: Session, asset_id: str, preview: bool = False) -> str:
     asset = crud.get_asset(db, asset_id)
     if not asset:
         raise ValueError(f"Asset with id {asset_id} not found")
+    if preview and asset.proxy_path:
+        return asset.proxy_path
     return asset.master_path
 
-def build_ffmpeg_command(db: Session, timeline: Dict[str, Any], job_id: str) -> tuple[List[str], str]:
+def build_ffmpeg_command(db: Session, timeline: Dict[str, Any], job_id: str, preview: bool = False) -> tuple[List[str], str]:
     """
     Builds an ffmpeg command from a timeline JSON object.
     """
     output_settings = timeline.get("output_settings", {})
-    output_filename = output_settings.get("output_filename", f"{job_id}.mp4")
-    output_resolution = output_settings.get("resolution", "1920x1080")
-    output_framerate = str(output_settings.get("framerate", "30"))
-    video_codec = output_settings.get("video_codec", "libx264")
-    audio_codec = output_settings.get("audio_codec", "aac")
-    bitrate = output_settings.get("bitrate")
+    
+    if preview:
+        output_filename = f"{job_id}_preview.mp4"
+        output_resolution = "854x480"
+        output_framerate = str(output_settings.get("framerate", "30"))
+        video_codec = "libx264"
+        audio_codec = "aac"
+        bitrate = "2M"
+        preset = "ultrafast"
+    else:
+        output_filename = output_settings.get("output_filename", f"{job_id}.mp4")
+        output_resolution = output_settings.get("resolution", "1920x1080")
+        output_framerate = str(output_settings.get("framerate", "30"))
+        video_codec = output_settings.get("video_codec", "libx264")
+        audio_codec = output_settings.get("audio_codec", "aac")
+        bitrate = output_settings.get("bitrate")
+        preset = "medium"
 
     tracks = timeline.get("tracks", [])
     video_clips = []
@@ -47,7 +60,7 @@ def build_ffmpeg_command(db: Session, timeline: Dict[str, Any], job_id: str) -> 
     has_audio = False
 
     for i, clip in enumerate(video_clips):
-        asset_path = get_asset_path(db, clip['asset_id'])
+        asset_path = get_asset_path(db, clip['asset_id'], preview=preview)
         # Check if the input file has audio
         probe_cmd = ["ffprobe", "-i", asset_path, "-show_streams", "-select_streams", "a", "-v", "0", "-f", "null", "-"]
         result = subprocess.run(probe_cmd, capture_output=True, text=True)
@@ -97,6 +110,7 @@ def build_ffmpeg_command(db: Session, timeline: Dict[str, Any], job_id: str) -> 
     ffmpeg_command.extend([
         "-r", output_framerate,
         "-c:v", video_codec,
+        "-preset", preset,
     ])
     
     if bitrate:

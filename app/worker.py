@@ -173,8 +173,12 @@ def worker_loop():
                 crud.update_job(db, job.id, status="completed", progress=100)
 
             elif job.type == "render":
-                timeline = json.loads(job.payload)
-                command, output_path = render.build_ffmpeg_command(db, timeline, job.id)
+                command, output_path = render.build_ffmpeg_command(db, payload, job.id, preview=False)
+                logs = render.run_ffmpeg_render(command, job.id)
+                crud.update_job(db, job.id, status="completed", progress=100, result_path=output_path, logs=logs)
+
+            elif job.type == "preview-render":
+                command, output_path = render.build_ffmpeg_command(db, payload, job.id, preview=True)
                 logs = render.run_ffmpeg_render(command, job.id)
                 crud.update_job(db, job.id, status="completed", progress=100, result_path=output_path, logs=logs)
             
